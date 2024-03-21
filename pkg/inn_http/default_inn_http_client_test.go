@@ -108,7 +108,10 @@ func TestDefaultInnHttpClientPost(t *testing.T) {
 		urlPath := "/core/wallet/assets"
 		mockedHttpClient.SetResponse(defaultResponse)
 
-		defaultInnHttpClient.Post(urlPath, body)
+		_, err = defaultInnHttpClient.Post(urlPath, body)
+		if err != nil {
+			t.Fatal("Something went wrong on calling Post", err)
+		}
 
 		if len(mockedHttpClient.BodyContents) < 1 {
 			t.Fatal("Body wasn't injected")
