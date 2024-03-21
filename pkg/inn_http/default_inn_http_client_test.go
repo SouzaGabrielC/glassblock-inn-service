@@ -2,8 +2,10 @@ package inn_http
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
+	"github.com/souzagabriel/glassblock-inn-service/pkg/util"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -52,38 +54,81 @@ func TestCreateNewDefaultInnHttpClient(t *testing.T) {
 func TestDefaultInnHttpClientPost(t *testing.T) {
 	apiKey := "d4d964fa-db59-4cd3-9c13-bf5b5c2711ff"
 	shardUrl := "https://innovation.test.devvio.com"
+	body := make(map[string]interface{})
+	defaultResponse := &http.Response{
+		StatusCode: http.StatusOK,
+	}
+
 	defaultInnHttpClient, err := NewDefaultInnHttpClient(apiKey, shardUrl)
 
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	body := make(map[string]interface{})
-	body["uuid"] = "c9f7a257-5a9a-41b2-9bcf-52ba924c4298"
-
-	resp, err := defaultInnHttpClient.Post("/core/wallet/assets", body)
-
-	if err != nil {
-		t.Fatal(err)
+	mockedHttpClient := util.NewMockedGenericHttpClient()
+	clearMockedHttpClient := func() {
+		mockedHttpClient.Clear()
 	}
 
-	defer resp.Body.Close()
+	defaultInnHttpClient.httpClient = mockedHttpClient
 
-	respBody, err := io.ReadAll(resp.Body)
+	t.Run("should pass through the error from HTTP client", func(t *testing.T) {
+		defer clearMockedHttpClient()
+		mockedHttpClient.SetError(errors.New("generic error"))
 
-	if err != nil {
-		t.Fatal(err)
-	}
+		_, err := defaultInnHttpClient.Post("/core/wallet/assets", body)
 
-	respBodyJson := make(map[string]interface{})
+		if err == nil {
+			t.Error("Error should not be nil when HTTP Client returns an error")
+		}
+	})
 
-	err = json.Unmarshal(respBody, &respBodyJson)
+	t.Run("should call the HTTP client with the path + shard URL provided", func(t *testing.T) {
+		defer clearMockedHttpClient()
 
-	if err != nil {
-		t.Fatal(err)
-	}
+		urlPath := "/core/wallet/assets"
 
-	for k, v := range respBodyJson {
-		fmt.Printf("Key: %v, Value: %v\n", k, v)
-	}
+		mockedHttpClient.SetResponse(defaultResponse)
+
+		resp, _ := defaultInnHttpClient.Post(urlPath, body)
+
+		joinedUrl, _ := url.JoinPath(shardUrl, urlPath)
+
+		if joinedUrl != mockedHttpClient.Urls[0] {
+			t.Error("URL in the HTTP client should be the same passed to method", joinedUrl, mockedHttpClient.Urls[0])
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Error("Status code should be ok, same as the default response set", resp.StatusCode)
+		}
+	})
+
+	t.Run("should inject api key into body", func(t *testing.T) {
+		defer clearMockedHttpClient()
+		urlPath := "/core/wallet/assets"
+		mockedHttpClient.SetResponse(defaultResponse)
+
+		defaultInnHttpClient.Post(urlPath, body)
+
+		if len(mockedHttpClient.BodyContents) < 1 {
+			t.Fatal("Body wasn't injected")
+		}
+
+		bodyClientFromRequest := make(map[string]interface{})
+
+		err := json.Unmarshal(mockedHttpClient.BodyContents[0], &bodyClientFromRequest)
+		if err != nil {
+			t.Fatal("Error unmarshalling body from request", err)
+		}
+
+		apiKeyFromRequest, ok := bodyClientFromRequest["apiKey"]
+
+		if !ok {
+			t.Fatal("Api key wasn't injected into request body")
+		}
+
+		if apiKey != apiKeyFromRequest {
+			t.Errorf("Api key from request doesn't match the api key from provided. [Request: %v, Provided: %v]", apiKeyFromRequest, apiKey)
+		}
+	})
 }
